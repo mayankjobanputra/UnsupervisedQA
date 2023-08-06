@@ -9,8 +9,9 @@ Module to handle reading, (de)seriaizing and dumping data
 """
 import json
 import attr
-from .data_classes import Cloze, Paragraph
+from .data_classes import Cloze, Paragraph, Claim
 import hashlib
+# import tracemalloc
 
 
 def clozes2squadformat(clozes, out_fobj):
@@ -18,6 +19,22 @@ def clozes2squadformat(clozes, out_fobj):
     data = {cloze.paragraph.paragraph_id: {'context': cloze.paragraph.text, 'qas': []} for cloze in clozes}
     for cloze in clozes:
         qas = data[cloze.paragraph.paragraph_id]
+        qas['qas'].append({
+            'question': cloze.question_text, 'id': cloze.cloze_id,
+            'answers': [{'text': cloze.answer_text, 'answer_start': cloze.answer_start}]
+        })
+    squad_dataset = {
+        'version': 1.1,
+        'data': [{'title': para_id, 'paragraphs': [payload]} for para_id, payload in data.items()]
+    }
+    json.dump(squad_dataset, out_fobj)
+
+
+def claimclozes2squadformat(clozes, out_fobj):
+    assert all([c.question_text is not None for c in clozes]), 'Translate these clozes firse, some dont have questions'
+    data = {cloze.paragraph.id: {'context': cloze.paragraph.claim, 'qas': []} for cloze in clozes}
+    for cloze in clozes:
+        qas = data[cloze.paragraph.id]
         qas['qas'].append({
             'question': cloze.question_text, 'id': cloze.cloze_id,
             'answers': [{'text': cloze.answer_text, 'answer_start': cloze.answer_start}]
@@ -51,6 +68,15 @@ def dump_clozes(clozes, fobj):
 
 def _get_paragraph_id(text):
     return hashlib.sha1(text.encode()).hexdigest()
+
+
+def parse_claim_from_jsonl(fobj):
+    for serialized in fobj:
+        # current, peak = tracemalloc.get_traced_memory()
+        # print(f"Current memory usage is {current / 10**3}KB; Peak was {peak / 10**3}KB")
+        # print(serialized.strip('\n'))
+        if serialized.strip('\n') != '':
+            yield _parse_attr_obj(Claim, serialized)
 
 
 def parse_paragraphs_from_txt(fobj):

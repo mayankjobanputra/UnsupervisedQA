@@ -10,12 +10,17 @@ Main interface to user
 import attr
 import argparse
 import os
+from tqdm import tqdm
 from .configs import UNMT_MODEL_SENTENCE_NE, \
     UNMT_MODEL_SENTENCE_NP, UNMT_MODEL_SUBCLAUSE_NE, \
     UNMT_MODEL_SUBCLAUSE_NE_WH_HEURISTIC
-from .parsers_and_writers import parse_paragraphs_from_jsonl, parse_paragraphs_from_txt, dump_clozes, clozes2squadformat
-from .generate_clozes import generate_clozes_from_paragraph, named_entity_answer_generator as ne_answer_gen, \
-    noun_phrase_answer_generator as np_answer_gen, is_appropriate_squad_datapoint
+from .parsers_and_writers import (parse_paragraphs_from_jsonl, parse_paragraphs_from_txt,
+                                  dump_clozes, clozes2squadformat, parse_claim_from_jsonl,
+                                  claimclozes2squadformat)
+from .generate_clozes import (generate_clozes_from_paragraph, generate_clozes_from_sentences,
+                              named_entity_answer_generator as ne_answer_gen,
+                              noun_phrase_answer_generator as np_answer_gen, is_appropriate_squad_datapoint,
+                              is_appropriate_fever_datapoint)
 from .constituency_parsing import get_constituency_parsed_clozes, shorten_cloze
 from .unmt_translation import get_unmt_questions_for_clozes
 from .baseline_translators import identity_translation, noisy_cloze_translation
@@ -139,6 +144,54 @@ def generate_synthetic_training_data(args):
     print('=' * 50)
 
 
+def generate_questions_from_sentences(args):
+    with open(args.input_file) as f:
+        if args.dataset == 'fever':
+            claims = parse_claim_from_jsonl(f)
+        else:
+            raise NotImplementedError
+
+        answer_generator = ne_answer_gen if args.use_named_entity_clozes else np_answer_gen
+        clozes = [cl for cl in tqdm(claims) for cl in generate_clozes_from_sentences(cl, answer_generator)]
+
+        # print('=' * 50)
+        # print(f'{len(clozes)} Cloze questions extracted for Translation. '
+        #       f'\n{len(clozes)/len(claims)} avg cloze per claim.')
+        # print('=' * 50)
+
+    clozes_with_questions = get_questions_for_clozes(
+        clozes,
+        args.use_subclause_clozes,
+        args.use_named_entity_clozes,
+        args.use_wh_heuristic,
+        args.translation_method
+    )
+
+    # filter generations
+    clozes_with_questions = [
+        c for c in clozes_with_questions
+        if is_appropriate_fever_datapoint(c.question_text, c.answer_text)
+    ]
+    print('=' * 50)
+    print('Dumping results')
+    print('=' * 50)
+    for o in args.output_file_formats.split(','):
+        if o == 'jsonl':
+            with open(args.output_file + '.json', 'w') as f:
+                dump_clozes(clozes_with_questions, f)
+            print(f"Exported {len(clozes_with_questions)} instances to {args.output_file + '.unsupervised_qa.jsonl'}")
+        elif o == 'squad':
+            with open(args.output_file + '.squad.json', 'w') as f:
+                claimclozes2squadformat(clozes_with_questions, f)
+            print(f"Exported {len(clozes_with_questions)} instances to {args.output_file + '.squad.json'}")
+        else:
+            raise NotImplementedError
+
+    print('=' * 50)
+    print('Complete')
+    print('=' * 50)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate synthetic training data for extractive QA tasks without supervision')
     parser.add_argument("input_file", type=str,
@@ -147,6 +200,8 @@ if __name__ == '__main__':
                         help="Path to write generated data to, see readme for formatting info")
     parser.add_argument("--input_file_format", type=str, default='txt', choices=['txt', 'jsonl'],
                         help="input file format, see readme for more info, default is txt")
+    parser.add_argument('--dataset', type=str, default=None, choices=['fever', 'qabriefs'],
+                        help="pass this flag to choose the dataset")
     parser.add_argument("--output_file_formats", type=str, default='jsonl,squad',
                         help="comma-seperated list of output file formats, from [jsonl, squad]," 
                              " an output file will be created for each format. Default is 'jsonl,squad'")
@@ -162,4 +217,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_wh_heuristic', action='store_true',
                         help="pass this flag to use the wh-word heuristic (recommended for downstream performance). Only compatable with named entity clozes")
     args = parser.parse_args()
-    generate_synthetic_training_data(args)
+    if args.dataset:
+        generate_questions_from_sentences(args)
+    else:
+        generate_synthetic_training_data(args)

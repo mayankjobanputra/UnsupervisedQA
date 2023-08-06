@@ -17,6 +17,12 @@ class Paragraph:
 
 
 @attr.s(hash=True)
+class Claim:
+    id = attr.ib()
+    claim = attr.ib()
+
+
+@attr.s(hash=True)
 class Cloze:
     cloze_id = attr.ib()
     paragraph = attr.ib()

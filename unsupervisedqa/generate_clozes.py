@@ -65,6 +65,18 @@ def is_appropriate_squad_datapoint(question_text, answer_text, paragraph_text):
     return p_good and q_good and a_good
 
 
+def is_appropriate_fever_datapoint(question_text, answer_text):
+    q_char_len_good = len(question_text) <= MAX_QUESTION_CHAR_LEN_THRESHOLD
+    q_word_len_good = len(question_text.split()) <= MAX_QUESTION_WORD_LEN_THRESHOLD
+    q_wordsize_good = all([len(w) <= MAX_QUESTION_WORDSIZE_THRESHOLD for w in question_text.split()])
+    q_good = q_char_len_good and q_word_len_good and q_wordsize_good
+
+    a_char_len_good = MIN_ANSWER_CHAR_LEN <= len(answer_text) <= MAX_ANSWER_CHAR_LEN
+    a_word_len_good = MIN_ANSWER_WORD_LEN <= len(answer_text.split()) <= MAX_ANSWER_WORD_LEN
+    a_good = a_char_len_good and a_word_len_good
+    return q_good and a_good
+
+
 def get_cloze_id(paragraph_text, sentence_text, answer_text):
     rep = paragraph_text + sentence_text + answer_text
     return hashlib.sha1(rep.encode()).hexdigest()
@@ -82,6 +94,31 @@ def generate_clozes_from_paragraph(paragraph, answer_generator):
                     yield Cloze(
                         cloze_id=get_cloze_id(paragraph.text, sentence.text, answer_text),
                         paragraph=paragraph,
+                        source_text=sentence.text,
+                        source_start=sentence.start_char,
+                        cloze_text=mask_answer(sentence.text, answer_text, answer_start, answer_type),
+                        answer_text=answer_text,
+                        answer_start=answer_start,
+                        constituency_parse=None,
+                        root_label=None,
+                        answer_type=answer_type,
+                        question_text=None
+                    )
+    return clozes
+
+
+def generate_clozes_from_sentences(claim, answer_generator):
+    clozes = []
+    para_doc = nlp(claim.claim)
+    for sentence in para_doc.sents:
+        is_good = is_appropriate_cloze(sentence.text)
+        if is_good:
+            answers = answer_generator(sentence)
+            for answer_text, answer_start, answer_type in answers:
+                if is_appropriate_answer(answer_text):
+                    yield Cloze(
+                        cloze_id=get_cloze_id(claim.claim, sentence.text, answer_text),
+                        paragraph=claim,
                         source_text=sentence.text,
                         source_start=sentence.start_char,
                         cloze_text=mask_answer(sentence.text, answer_text, answer_start, answer_type),
